@@ -1,2 +1,2 @@
 # neural-topic-models
-Some famous neural topic models with Pytorch Lightning
+Some popular neural topic models with Pytorch Lightning.

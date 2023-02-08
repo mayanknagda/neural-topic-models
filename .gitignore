@@ -1,3 +1,13 @@
+# MacOS
+.DS_Store
+
+# Pycharm
+.idea/
+
+# checkpoints
+*.ipynb_checkpoints
+*.ckpt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
