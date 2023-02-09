@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Dirichlet
 import pytorch_lightning as pl
 
@@ -20,29 +21,29 @@ class DVAE(pl.LightningModule):
             nn.Dropout(p=0.25),
 
             nn.Linear(in_features=500, out_features=self.topic_size),
-            nn.BatchNorm1d(num_features=self.topic_size, affine=False),
-            nn.Softplus(),
         )
+        self.encoder_norm = nn.BatchNorm1d(num_features=self.topic_size, eps=0.001, momentum=0.001, affine=True)
+        self.encoder_norm.weight.data.copy_(torch.ones(self.topic_size))
+        self.encoder_norm.weight.requires_grad = False
 
         # decoder
         self.decoder = nn.Linear(in_features=self.topic_size, out_features=self.vocab_size)
-        self.decoder_norm = nn.Sequential(
-            nn.BatchNorm1d(vocab_size, affine=False),
-            nn.LogSoftmax(dim=1),
-        )
+        self.decoder_norm = nn.BatchNorm1d(num_features=self.vocab_size, eps=0.001, momentum=0.001, affine=True)
+        self.decoder_norm.weight.data.copy_(torch.ones(self.vocab_size))
+        self.decoder_norm.weight.requires_grad = False
 
         # save hyperparameters
         self.save_hyperparameters()
 
     def forward(self, x):
-        alpha = self.encoder(x)
+        alpha = F.softplus(self.encoder_norm(self.encoder(x)))
         alpha = torch.max(torch.tensor(0.00001, device=x.device), alpha)
         dist = Dirichlet(alpha)
         if self.training:
             z = dist.rsample()
         else:
             z = dist.mean
-        x_recon = self.decoder_norm(self.decoder(z))
+        x_recon = F.log_softmax(self.decoder_norm(self.decoder(z)), dim=1)
         return x_recon, dist
 
     def training_step(self, batch, batch_idx):

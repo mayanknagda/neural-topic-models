@@ -25,8 +25,8 @@ def get_data(data_name, batch_size):
         raise NotImplementedError
 
     pipe = Pipe(preprocess=True,
-                max_df=0.80,
-                min_df=50,
+                max_df=0.90,
+                min_df=20,
                 doc_start_token='<s>',
                 doc_end_token='</s>',
                 unk_token='<unk>',
