@@ -16,11 +16,11 @@ class DVAE(pl.LightningModule):
 
         # encoder
         self.encoder = nn.Sequential(
-            nn.Linear(in_features=self.vocab_size, out_features=500),
+            nn.Linear(in_features=self.vocab_size, out_features=100),
             nn.ReLU(),
             nn.Dropout(p=0.25),
 
-            nn.Linear(in_features=500, out_features=self.topic_size),
+            nn.Linear(in_features=100, out_features=self.topic_size),
         )
         self.encoder_norm = nn.BatchNorm1d(num_features=self.topic_size, eps=0.001, momentum=0.001, affine=True)
         self.encoder_norm.weight.data.copy_(torch.ones(self.topic_size))
@@ -51,17 +51,29 @@ class DVAE(pl.LightningModule):
         x_recon, dist = self(x)
         recon, kl = self.objective(x, x_recon, dist)
         loss = recon + 2 * kl
-        self.log_dict({'train/loss': loss, 'train/recon': recon, 'train/kl': kl}, prog_bar=True, logger=True,
-                      on_step=False, on_epoch=True)
+        self.log_dict({'train/loss': loss,
+                       'train/recon': recon,
+                       'train/kl': kl},
+                      prog_bar=True,
+                      logger=True,
+                      on_step=False,
+                      on_epoch=True,
+                      sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x = batch['bow'].float()
         x_recon, dist = self(x)
         recon, kl = self.objective(x, x_recon, dist)
-        loss = recon + 2 * kl
-        self.log_dict({'val/loss': loss, 'val/recon': recon, 'val/kl': kl}, prog_bar=True, logger=True, on_step=False,
-                      on_epoch=True)
+        loss = recon + kl
+        self.log_dict({'val/loss': loss,
+                       'val/recon': recon,
+                       'val/kl': kl},
+                      prog_bar=True,
+                      logger=True,
+                      on_step=False,
+                      on_epoch=True,
+                      sync_dist=True)
         return loss
 
     def configure_optimizers(self):
@@ -70,8 +82,8 @@ class DVAE(pl.LightningModule):
 
     def objective(self, x, x_recon, dist):
         recon = -torch.sum(x * x_recon, dim=1).mean()
-        prior = Dirichlet(torch.ones(self.topic_size, device=x.device) * 0.02)
-        kl = torch.distributions.kl.kl_divergence(dist, prior).mean()
+        prior = Dirichlet(torch.ones(self.topic_size, device=x.device) * 0.01)
+        kl = 2 * torch.distributions.kl.kl_divergence(dist, prior).mean()
         return recon, kl
 
     def get_topics(self, vocab, path):

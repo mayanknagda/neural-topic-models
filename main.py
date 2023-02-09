@@ -1,12 +1,16 @@
 import models
 import data
+import torch
 from utils import TopicEval
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.strategies.ddp import DDPStrategy
 from argparse import ArgumentParser
 
 
 def main(settings):
+    # precision
+    torch.set_float32_matmul_precision('medium')
     # set seed
     seed_everything(42, workers=True)
     # import data
@@ -22,8 +26,9 @@ def main(settings):
                       accelerator=settings['accelerator'],
                       devices=settings['devices'],
                       default_root_dir=settings['root_dir'],
+                      strategy=DDPStrategy(find_unused_parameters=False),
+                      log_every_n_steps=1,
                       logger=logger)
-
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
     # get topics and evaluate
     best_model_path = trainer.checkpoint_callback.best_model_path
@@ -53,7 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('--devices', type=int, default=-1)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--topic_size', type=int, default=20)
-    parser.add_argument('--max_epochs', type=int, default=100)
+    parser.add_argument('--max_epochs', type=int, default=1000)
     args = parser.parse_args()
     settings = vars(args)
     if settings['devices'] == -1:
