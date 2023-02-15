@@ -52,8 +52,8 @@ def main(settings):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--data_name', type=str, default='20ng')
-    parser.add_argument('--model_name', type=str, default='dvae')
-    parser.add_argument('--accelerator', type=str, default='auto')
+    parser.add_argument('--model_name', type=str, default='dvae_rsvi')
+    parser.add_argument('--accelerator', type=str, default='cpu')
     parser.add_argument('--root_dir', type=str, default='output/')
     parser.add_argument('--devices', type=int, default=-1)
     parser.add_argument('--batch_size', type=int, default=128)
