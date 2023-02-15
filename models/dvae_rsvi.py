@@ -82,12 +82,12 @@ class DVAE_RSVI(pl.LightningModule):
         else:
             z = dist.mean
         x_recon = F.log_softmax(self.decoder_norm(self.decoder(z)), dim=1)
-        return x_recon, dist
+        return x_recon, alpha
 
     def training_step(self, batch, batch_idx):
         x = batch['bow'].float()
-        x_recon, dist = self(x)
-        recon, kl = self.objective(x, x_recon, dist)
+        x_recon, alpha = self(x)
+        recon, kl = self.objective(x, x_recon, alpha)
         loss = recon + 2 * kl
         self.log_dict({'train/loss': loss,
                        'train/recon': recon,
@@ -101,8 +101,8 @@ class DVAE_RSVI(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x = batch['bow'].float()
-        x_recon, dist = self(x)
-        recon, kl = self.objective(x, x_recon, dist)
+        x_recon, alpha = self(x)
+        recon, kl = self.objective(x, x_recon, alpha)
         loss = recon + kl
         self.log_dict({'val/loss': loss,
                        'val/recon': recon,
@@ -118,10 +118,10 @@ class DVAE_RSVI(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         return optimizer
 
-    def objective(self, x, x_recon, dist):
+    def objective(self, x, x_recon, alpha):
         recon = -torch.sum(x * x_recon, dim=1).mean()
         alpha_prior = torch.ones((x.shape[0], self.topic_size), device=x.device) * 0.02
-        kl = self.kl_divergence(dist.concentration, alpha_prior).mean()
+        kl = self.kl_divergence(alpha, alpha_prior).mean()
         return recon, kl
 
     def kl_divergence(self, alpha, alpha_prior):
