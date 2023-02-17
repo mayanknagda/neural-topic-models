@@ -43,6 +43,23 @@ class RSVI(Function):
         return grad_input
 
 
+class LinearFunction(Function):
+    @staticmethod
+    def forward(ctx, input, weight, bias):
+        ctx.save_for_backward(input, weight, bias)
+        output = input.mm(weight.t())
+        output += bias.unsqueeze(0).expand_as(output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight, bias = ctx.saved_tensors
+        grad_input = grad_output.mm(weight)
+        grad_weight = grad_output.t().mm(input)
+        grad_bias = grad_output.sum(0).squeeze(0)
+        return grad_input, grad_weight, grad_bias
+
+
 class DVAE_RSVI(pl.LightningModule):
     def __init__(self,
                  vocab_size,
@@ -52,20 +69,33 @@ class DVAE_RSVI(pl.LightningModule):
         self.vocab_size = vocab_size
         self.topic_size = topic_size
 
-        # encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(in_features=self.vocab_size, out_features=100),
-            nn.ReLU(),
-            nn.Dropout(p=0.25),
+        # dropout
+        self.dropout = nn.Dropout(p=0.25)
 
-            nn.Linear(in_features=100, out_features=self.topic_size),
-        )
+        # encoder
+        self.weight_one = nn.Parameter(torch.empty(100, self.vocab_size))
+        self.bias_one = nn.Parameter(torch.empty(100))
+
+        nn.init.xavier_uniform_(self.weight_one)
+        nn.init.uniform_(self.bias_one)
+
+        self.weight_two = nn.Parameter(torch.empty(self.topic_size, 100))
+        self.bias_two = nn.Parameter(torch.empty(self.topic_size))
+
+        nn.init.xavier_uniform_(self.weight_two)
+        nn.init.uniform_(self.bias_two)
+
         self.encoder_norm = nn.BatchNorm1d(num_features=self.topic_size, eps=0.001, momentum=0.001, affine=True)
         self.encoder_norm.weight.data.copy_(torch.ones(self.topic_size))
         self.encoder_norm.weight.requires_grad = False
 
         # decoder
-        self.decoder = nn.Linear(in_features=self.topic_size, out_features=self.vocab_size)
+        self.decoder_weight = nn.Parameter(torch.empty(self.vocab_size, self.topic_size))
+        self.decoder_bias = nn.Parameter(torch.empty(self.vocab_size))
+
+        nn.init.xavier_uniform_(self.decoder_weight)
+        nn.init.uniform_(self.decoder_bias)
+
         self.decoder_norm = nn.BatchNorm1d(num_features=self.vocab_size, eps=0.001, momentum=0.001, affine=True)
         self.decoder_norm.weight.data.copy_(torch.ones(self.vocab_size))
         self.decoder_norm.weight.requires_grad = False
@@ -74,14 +104,18 @@ class DVAE_RSVI(pl.LightningModule):
         self.save_hyperparameters()
 
     def forward(self, x):
-        alpha = F.softplus(self.encoder_norm(self.encoder(x)))
-        alpha = torch.max(torch.tensor(0.00001, device=x.device), alpha)
+        lambda_ = F.relu(LinearFunction.apply(x, self.weight_one, self.bias_one))
+        lambda_ = self.dropout(lambda_)
+        l_1 = self.encoder_norm(LinearFunction.apply(lambda_, self.weight_two, self.bias_two))
+        alpha = torch.max(torch.tensor(0.00001, device=x.device), F.softplus(l_1))
         dist = Dirichlet(alpha)
         if self.training:
             z = dist.rsample()
         else:
             z = dist.mean
-        x_recon = F.log_softmax(self.decoder_norm(self.decoder(z)), dim=1)
+        l_2 = LinearFunction.apply(z, self.decoder_weight, self.decoder_bias)
+        l_2 = self.decoder_norm(l_2)
+        x_recon = F.log_softmax(l_2, dim=1)
         return x_recon, alpha
 
     def training_step(self, batch, batch_idx):
@@ -141,7 +175,7 @@ class DVAE_RSVI(pl.LightningModule):
         model.freeze()
         vocab_id2word = {v: k for k, v in vocab.items()}
         # get topics
-        topics = model.decoder.weight.detach().cpu().numpy().T
+        topics = model.decoder_weight.detach().cpu().numpy().T
         topics = topics.argsort(axis=1)[:, ::-1]
         # top 10 words
         topics = topics[:, :10]
