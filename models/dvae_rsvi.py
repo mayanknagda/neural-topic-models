@@ -11,54 +11,35 @@ def calc_epsilon(p, alpha):
     powza = torch.pow(p / (alpha - 1 / 3), 1 / 3)
     return sqrt_alpha * (powza - 1)
 
+def gamma_h_boosted(epsilon, u, alpha):
+    """
+    Reparameterization for gamma rejection sampler with shape augmentation.
+    """
+    B = u.shape[0]
+    K = alpha.shape[1]
+    r = torch.arange(B, device=alpha.device)
+    rm = torch.reshape(r, (-1, 1, 1)).float()
+    alpha_vec = torch.tile(alpha, (B, 1)).reshape((B, -1, K)) + rm
+    u_pow = torch.pow(u, 1. / alpha_vec) + 1e-10
+    return torch.prod(u_pow, axis=0) * gamma_h(epsilon, alpha + B)
 
 def gamma_h(eps, alpha):
     b = alpha - 1 / 3
     c = 1 / torch.sqrt(9 * b)
     v = 1 + (eps * c)
     return b * (v ** 3)
-
-
-def gamma_grad_h(eps, alpha):
-    b = alpha - 1 / 3
-    c = 1 / torch.sqrt(9 * b)
-    v = 1 + (eps * c)
-    return v ** 3 - 13.5 * eps * b * (v ** 2) * (c ** 3)
-
-
-class RSVI(Function):
-    @staticmethod
-    def forward(ctx, alpha):
-        p = torch.distributions.Gamma(alpha, 1).sample()
-        eps = calc_epsilon(p, alpha)
-        ctx.save_for_backward(alpha, eps)
-        z = gamma_h(eps, alpha)
-        return z
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        alpha, eps = ctx.saved_tensors
-        grad_input = grad_output.clone()
-        grad_input += gamma_grad_h(eps, alpha)
-        return grad_input
-
-
-class LinearFunction(Function):
-    @staticmethod
-    def forward(ctx, input, weight, bias):
-        ctx.save_for_backward(input, weight, bias)
-        output = input.mm(weight.t())
-        output += bias.unsqueeze(0).expand_as(output)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        input, weight, bias = ctx.saved_tensors
-        grad_input = grad_output.mm(weight)
-        grad_weight = grad_output.t().mm(input)
-        grad_bias = grad_output.sum(0).squeeze(0)
-        return grad_input, grad_weight, grad_bias
-
+    
+def rsvi(alpha):
+    B = 10
+    gam = torch.distributions.Gamma(alpha+B, 1).sample().to(alpha.device)
+    eps = calc_epsilon(gam, alpha+B).detach().to(alpha.device)
+    u = torch.rand((B, alpha.shape[0], alpha.shape[1]), device=alpha.device)
+    doc_vec = gamma_h_boosted(eps, u, alpha)
+    # normalize
+    gam = doc_vec
+    doc_vec = gam / torch.reshape(torch.sum(gam, dim=1), (-1, 1))
+    z = doc_vec.reshape(alpha.shape)
+    return z
 
 class DVAE_RSVI(pl.LightningModule):
     def __init__(self,
@@ -69,33 +50,20 @@ class DVAE_RSVI(pl.LightningModule):
         self.vocab_size = vocab_size
         self.topic_size = topic_size
 
-        # dropout
-        self.dropout = nn.Dropout(p=0.25)
-
         # encoder
-        self.weight_one = nn.Parameter(torch.empty(100, self.vocab_size))
-        self.bias_one = nn.Parameter(torch.empty(100))
+        self.encoder = nn.Sequential(
+            nn.Linear(in_features=self.vocab_size, out_features=100),
+            nn.ReLU(),
+            nn.Dropout(p=0.25),
 
-        nn.init.xavier_uniform_(self.weight_one)
-        nn.init.uniform_(self.bias_one)
-
-        self.weight_two = nn.Parameter(torch.empty(self.topic_size, 100))
-        self.bias_two = nn.Parameter(torch.empty(self.topic_size))
-
-        nn.init.xavier_uniform_(self.weight_two)
-        nn.init.uniform_(self.bias_two)
-
+            nn.Linear(in_features=100, out_features=self.topic_size),
+        )
         self.encoder_norm = nn.BatchNorm1d(num_features=self.topic_size, eps=0.001, momentum=0.001, affine=True)
         self.encoder_norm.weight.data.copy_(torch.ones(self.topic_size))
         self.encoder_norm.weight.requires_grad = False
 
         # decoder
-        self.decoder_weight = nn.Parameter(torch.empty(self.vocab_size, self.topic_size))
-        self.decoder_bias = nn.Parameter(torch.empty(self.vocab_size))
-
-        nn.init.xavier_uniform_(self.decoder_weight)
-        nn.init.uniform_(self.decoder_bias)
-
+        self.decoder = nn.Linear(in_features=self.topic_size, out_features=self.vocab_size)
         self.decoder_norm = nn.BatchNorm1d(num_features=self.vocab_size, eps=0.001, momentum=0.001, affine=True)
         self.decoder_norm.weight.data.copy_(torch.ones(self.vocab_size))
         self.decoder_norm.weight.requires_grad = False
@@ -104,18 +72,10 @@ class DVAE_RSVI(pl.LightningModule):
         self.save_hyperparameters()
 
     def forward(self, x):
-        lambda_ = F.relu(LinearFunction.apply(x, self.weight_one, self.bias_one))
-        lambda_ = self.dropout(lambda_)
-        l_1 = self.encoder_norm(LinearFunction.apply(lambda_, self.weight_two, self.bias_two))
-        alpha = torch.max(torch.tensor(0.00001, device=x.device), F.softplus(l_1))
-        dist = Dirichlet(alpha)
-        if self.training:
-            z = dist.rsample()
-        else:
-            z = dist.mean
-        l_2 = LinearFunction.apply(z, self.decoder_weight, self.decoder_bias)
-        l_2 = self.decoder_norm(l_2)
-        x_recon = F.log_softmax(l_2, dim=1)
+        alpha = F.softplus(self.encoder_norm(self.encoder(x)))
+        alpha = torch.max(torch.tensor(0.00001, device=x.device), alpha)
+        z = rsvi(alpha)
+        x_recon = F.log_softmax(self.decoder_norm(self.decoder(z)), dim=1)
         return x_recon, alpha
 
     def training_step(self, batch, batch_idx):
@@ -154,19 +114,14 @@ class DVAE_RSVI(pl.LightningModule):
 
     def objective(self, x, x_recon, alpha):
         recon = -torch.sum(x * x_recon, dim=1).mean()
-        alpha_prior = torch.ones((x.shape[0], self.topic_size), device=x.device) * 0.02
-        kl = self.kl_divergence(alpha, alpha_prior).mean()
+        kl = self.kl_divergence(alpha).mean()
         return recon, kl
 
-    def kl_divergence(self, alpha, alpha_prior):
-        first_term = torch.lgamma(torch.sum(alpha, dim=1))
-        second_term = torch.lgamma(torch.sum(alpha_prior, dim=1))
-        third_term = torch.sum(torch.lgamma(alpha_prior), dim=1)
-        fourth_term = torch.sum(torch.lgamma(alpha), dim=1)
-        minus = alpha - alpha_prior
-        digamma = torch.digamma(alpha) - torch.digamma(torch.sum(alpha, dim=1)).unsqueeze(1)
-        fifth_term = torch.sum(minus * digamma, dim=1)
-        return first_term - second_term + third_term - fourth_term + fifth_term
+    def kl_divergence(self, alpha):
+        alpha_prior = torch.ones(alpha.shape, device=alpha.device) * 0.02
+        prior = Dirichlet(alpha_prior)
+        posterior = Dirichlet(alpha)
+        return torch.distributions.kl.kl_divergence(posterior, prior)
 
     def get_topics(self, vocab, path):
         # load best model
@@ -175,7 +130,7 @@ class DVAE_RSVI(pl.LightningModule):
         model.freeze()
         vocab_id2word = {v: k for k, v in vocab.items()}
         # get topics
-        topics = model.decoder_weight.detach().cpu().numpy().T
+        topics = model.decoder.weight.detach().cpu().numpy().T
         topics = topics.argsort(axis=1)[:, ::-1]
         # top 10 words
         topics = topics[:, :10]
