@@ -3,6 +3,7 @@ import data
 import torch
 from utils import TopicEval
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from argparse import ArgumentParser
@@ -22,7 +23,12 @@ def main(settings):
     # logger
     logger = TensorBoardLogger(settings['root_dir'], name=settings['model_name'], version=settings['data_name'])
     # train
+    checkpoint_callback = ModelCheckpoint(monitor='val/loss',
+                                          mode='min',
+                                          save_top_k=1,
+                                          filename='{epoch}-{val/loss:.2f}')
     trainer = Trainer(max_epochs=settings['max_epochs'],
+                      callbacks=[checkpoint_callback],
                       accelerator=settings['accelerator'],
                       devices=settings['devices'],
                       default_root_dir=settings['root_dir'],
@@ -31,7 +37,7 @@ def main(settings):
                       logger=logger)
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
     # get topics and evaluate
-    best_model_path = trainer.checkpoint_callback.best_model_path
+    best_model_path = checkpoint_callback.best_model_path
     topics = model.get_topics(vocab=vocab, path=best_model_path)
     eval = TopicEval(vocab=vocab, text=text)
     c_v = eval.topic_coherence(metric='c_v', topics=topics)
@@ -52,7 +58,7 @@ def main(settings):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--data_name', type=str, default='20ng')
-    parser.add_argument('--model_name', type=str, default='dvae')
+    parser.add_argument('--model_name', type=str, default='dvae_rsvi')
     parser.add_argument('--accelerator', type=str, default='auto')
     parser.add_argument('--root_dir', type=str, default='output/')
     parser.add_argument('--devices', type=int, default=-1)
