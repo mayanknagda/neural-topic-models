@@ -45,9 +45,9 @@ def main(settings):
     td = eval.topic_diversity(topics=topics)
     # save all results in .txt file
     tensor_board = trainer.logger.experiment
-    tensor_board.add_text('c_v', str(c_v))
-    tensor_board.add_text('c_npmi', str(c_npmi))
-    tensor_board.add_text('td', str(td))
+    tensor_board.add_scalar('c_v', str(c_v))
+    tensor_board.add_scalar('c_npmi', str(c_npmi))
+    tensor_board.add_scalar('td', str(td))
     path = trainer.log_dir + '/topics.txt'
     with open(path, 'w') as f:
         f.write('c_v: ' + str(c_v) + '\t' + 'c_npmi: ' + str(c_npmi) + '\t' + 'td: ' + str(td) + '\n')

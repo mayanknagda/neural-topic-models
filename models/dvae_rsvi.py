@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Function
 from torch.distributions import Dirichlet
 import pytorch_lightning as pl
 
@@ -10,6 +9,7 @@ def calc_epsilon(p, alpha):
     sqrt_alpha = torch.sqrt(9 * alpha - 3)
     powza = torch.pow(p / (alpha - 1 / 3), 1 / 3)
     return sqrt_alpha * (powza - 1)
+
 
 def gamma_h_boosted(epsilon, u, alpha):
     """
@@ -23,16 +23,18 @@ def gamma_h_boosted(epsilon, u, alpha):
     u_pow = torch.pow(u, 1. / alpha_vec) + 1e-10
     return torch.prod(u_pow, axis=0) * gamma_h(epsilon, alpha + B)
 
+
 def gamma_h(eps, alpha):
     b = alpha - 1 / 3
     c = 1 / torch.sqrt(9 * b)
     v = 1 + (eps * c)
     return b * (v ** 3)
-    
+
+
 def rsvi(alpha):
     B = 10
-    gam = torch.distributions.Gamma(alpha+B, 1).sample().to(alpha.device)
-    eps = calc_epsilon(gam, alpha+B).detach().to(alpha.device)
+    gam = torch.distributions.Gamma(alpha + B, 1).sample().to(alpha.device)
+    eps = calc_epsilon(gam, alpha + B).detach().to(alpha.device)
     u = torch.rand((B, alpha.shape[0], alpha.shape[1]), device=alpha.device)
     doc_vec = gamma_h_boosted(eps, u, alpha)
     # normalize
@@ -40,6 +42,7 @@ def rsvi(alpha):
     doc_vec = gam / torch.reshape(torch.sum(gam, dim=1), (-1, 1))
     z = doc_vec.reshape(alpha.shape)
     return z
+
 
 class DVAE_RSVI(pl.LightningModule):
     def __init__(self,
