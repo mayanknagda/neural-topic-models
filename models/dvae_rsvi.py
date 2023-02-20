@@ -47,11 +47,13 @@ def rsvi(alpha):
 class DVAE_RSVI(pl.LightningModule):
     def __init__(self,
                  vocab_size,
-                 topic_size):
+                 topic_size,
+                 beta=2.0):
         super().__init__()
 
         self.vocab_size = vocab_size
         self.topic_size = topic_size
+        self.beta = beta
 
         # encoder
         self.encoder = nn.Sequential(
@@ -85,7 +87,7 @@ class DVAE_RSVI(pl.LightningModule):
         x = batch['bow'].float()
         x_recon, alpha = self(x)
         recon, kl = self.objective(x, x_recon, alpha)
-        loss = recon + 2 * kl
+        loss = recon + self.beta * kl
         self.log_dict({'train/loss': loss,
                        'train/recon': recon,
                        'train/kl': kl},
@@ -100,7 +102,7 @@ class DVAE_RSVI(pl.LightningModule):
         x = batch['bow'].float()
         x_recon, alpha = self(x)
         recon, kl = self.objective(x, x_recon, alpha)
-        loss = recon + kl
+        loss = recon + self.beta * kl
         self.log_dict({'val/loss': loss,
                        'val/recon': recon,
                        'val/kl': kl},
