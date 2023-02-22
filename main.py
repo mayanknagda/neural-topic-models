@@ -16,9 +16,13 @@ def main(settings):
     seed_everything(42, workers=True)
     # import data
     train_loader, test_loader, val_loader, text, vocab = data.get_data(settings['data_name'], settings['batch_size'])
+    vocab_embeddings = None
+    if settings['model_name'].startswith('etm'):
+        vocab_embeddings = data.get_vocab_embeddings(vocab=vocab)
     # import model
     model = models.get_model(model_name=settings['model_name'],
                              vocab_size=len(vocab),
+                             vocab_embeddings=vocab_embeddings,
                              topic_size=settings['topic_size'])
     # logger
     logger = TensorBoardLogger(settings['root_dir'], name=settings['model_name'], version=settings['data_name'])
@@ -44,10 +48,9 @@ def main(settings):
     c_npmi = eval.topic_coherence(metric='c_npmi', topics=topics)
     td = eval.topic_diversity(topics=topics)
     # save all results in .txt file
-    tensor_board = trainer.logger.experiment
-    tensor_board.add_scalar('c_v', str(c_v))
-    tensor_board.add_scalar('c_npmi', str(c_npmi))
-    tensor_board.add_scalar('td', str(td))
+    logger.log_metrics({'c_v': c_v})
+    logger.log_metrics({'c_npmi': c_npmi})
+    logger.log_metrics({'td': td})
     path = trainer.log_dir + '/topics.txt'
     with open(path, 'w') as f:
         f.write('c_v: ' + str(c_v) + '\t' + 'c_npmi: ' + str(c_npmi) + '\t' + 'td: ' + str(td) + '\n')
@@ -58,13 +61,13 @@ def main(settings):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--data_name', type=str, default='20ng')
-    parser.add_argument('--model_name', type=str, default='dvae_rsvi')
+    parser.add_argument('--model_name', type=str, default='etm_dirichlet_rsvi')
     parser.add_argument('--accelerator', type=str, default='auto')
     parser.add_argument('--root_dir', type=str, default='output/')
     parser.add_argument('--devices', type=int, default=-1)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--topic_size', type=int, default=20)
-    parser.add_argument('--max_epochs', type=int, default=1000)
+    parser.add_argument('--max_epochs', type=int, default=1)
     args = parser.parse_args()
     settings = vars(args)
     if settings['devices'] == -1:

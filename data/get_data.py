@@ -1,4 +1,6 @@
+import torch
 from .TokenEase import Pipe
+import gensim.downloader as gensim_api
 from torch.utils.data import DataLoader, Dataset
 from sklearn.datasets import fetch_20newsgroups
 
@@ -13,6 +15,14 @@ class TorchDatasetBoW(Dataset):
     def __getitem__(self, idx):
         return {'bow': self.data[idx]}
 
+def get_vocab_embeddings(vocab: dict):
+    # download glove.6B.50d.txt from https://nlp.stanford.edu/projects/glove/
+    model = gensim_api.load('glove-wiki-gigaword-300')
+    embeddings = torch.zeros(len(vocab), 300)
+    for i, word in enumerate(vocab):
+        if word in model:
+            embeddings[i] = torch.from_numpy(model[word].copy())
+    return embeddings
 
 def get_data(data_name, batch_size):
     if data_name == '20ng':
